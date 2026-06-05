@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CVI 多色移動條紋訓練</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 10;
+            width: 300px;
+            transition: opacity 0.3s ease;
+        }
+        #show-ui-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: 1px solid #666;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 5;
+            display: none;
+            font-size: 16px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+        select, button {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover, select:hover {
+            background: #444;
+        }
+        .value-display {
+            float: right;
+            font-weight: normal;
+            color: #aaa;
+        }
+        #btn-play {
+            background: #28a745;
+            border-color: #28a745;
+            font-weight: bold;
+            font-size: 16px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        #btn-play.paused {
+            background: #dc3545;
+            border-color: #dc3545;
+        }
+        .color-preview {
+            display: flex;
+            height: 10px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .color-block {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <button id="show-ui-btn">顯示控制面板 ⚙️</button>
+
+    <div id="ui-panel">
+        <button id="btn-play">暫停 / 播放</button>
+
+        <div class="control-group">
+            <label>顏色數量: <span id="val-colors" class="value-display">3</span></label>
+            <input type="range" id="input-colors" min="3" max="11" value="3">
+            <div id="color-preview-bar" class="color-preview"></div>
+        </div>
+
+        <div class="control-group">
+            <label>條紋寬度 (px): <span id="val-width" class="value-display">150</span></label>
+            <input type="range" id="input-width" min="50" max="400" step="10" value="150">
+        </div>
+
+        <div class="control-group">
+            <label>移動速度: <span id="val-speed" class="value-display">2.0</span></label>
+            <input type="range" id="input-speed" min="0.5" max="10" step="0.5" value="2">
+        </div>
+
+        <div class="control-group">
+            <label>移動方向</label>
+            <select id="input-direction">
+                <option value="right">向右移動 (垂直條紋)</option>
+                <option value="left">向左移動 (垂直條紋)</option>
+                <option value="down">向下移動 (水平條紋)</option>
+                <option value="up">向上移動 (水平條紋)</option>
+            </select>
+        </div>
+
+        <button id="btn-hide-ui">隱藏面板 (專注模式)</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 依序排列的顏色 (紅黃藍綠紫橙青棕粉黑白)
+        const COLORS = [
+            '#FF0000', // 1. 紅
+            '#FFFF00', // 2. 黃
+            '#0000FF', // 3. 藍
+            '#00FF00', // 4. 綠
+            '#800080', // 5. 紫
+            '#FFA500', // 6. 橙
+            '#00FFFF', // 7. 青
+            '#8B4513', // 8. 棕 (使用 SaddleBrown 讓對比更清晰)
+            '#FFC0CB', // 9. 粉
+            '#000000', // 10. 黑
+            '#FFFFFF'  // 11. 白
+        ];
+
+        // 狀態變數
+        let config = {
+            numColors: 3,
+            stripeWidth: 150,
+            speed: 2,
+            direction: 'right', // right, left, down, up
+            isPlaying: true
+        };
+
+        let offset = 0;
+        let animationId;
+
+        // UI 元素
+        const uiPanel = document.getElementById('ui-panel');
+        const showUiBtn = document.getElementById('show-ui-btn');
+        const btnPlay = document.getElementById('btn-play');
+        const previewBar = document.getElementById('color-preview-bar');
+
+        // 調整畫布大小
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 更新顏色預覽條
+        function updateColorPreview() {
+            previewBar.innerHTML = '';
+            for(let i=0; i<config.numColors; i++) {
+                let div = document.createElement('div');
+                div.className = 'color-block';
+                div.style.backgroundColor = COLORS[i];
+                previewBar.appendChild(div);
+            }
+        }
+
+        // 綁定 UI 事件
+        document.getElementById('input-colors').addEventListener('input', (e) => {
+            config.numColors = parseInt(e.target.value);
+            document.getElementById('val-colors').textContent = config.numColors;
+            updateColorPreview();
+        });
+
+        document.getElementById('input-width').addEventListener('input', (e) => {
+            config.stripeWidth = parseInt(e.target.value);
+            document.getElementById('val-width').textContent = config.stripeWidth;
+        });
+
+        document.getElementById('input-speed').addEventListener('input', (e) => {
+            config.speed = parseFloat(e.target.value);
+            document.getElementById('val-speed').textContent = config.speed.toFixed(1);
+        });
+
+        document.getElementById('input-direction').addEventListener('change', (e) => {
+            config.direction = e.target.value;
+        });
+
+        btnPlay.addEventListener('click', () => {
+            config.isPlaying = !config.isPlaying;
+            if(config.isPlaying) {
+                btnPlay.textContent = "暫停 / 播放";
+                btnPlay.classList.remove('paused');
+            } else {
+                btnPlay.textContent = "已暫停 (點擊繼續)";
+                btnPlay.classList.add('paused');
+            }
+        });
+
+        document.getElementById('btn-hide-ui').addEventListener('click', () => {
+            uiPanel.style.display = 'none';
+            showUiBtn.style.display = 'block';
+        });
+
+        showUiBtn.addEventListener('click', () => {
+            uiPanel.style.display = 'block';
+            showUiBtn.style.display = 'none';
+        });
+
+        // 繪製函數
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const activeColors = COLORS.slice(0, config.numColors);
+            const totalCycleWidth = config.stripeWidth * config.numColors;
+
+            // 確保 offset 始終在 0 到 totalCycleWidth 之間循環
+            offset = offset % totalCycleWidth;
+            if (offset < 0) offset += totalCycleWidth;
+
+            // 計算需要繪製的條紋數量以覆蓋整個畫面
+            let numStripes;
+            
+            if (config.direction === 'right' || config.direction === 'left') {
+                numStripes = Math.ceil(canvas.width / config.stripeWidth) + config.numColors;
+                
+                for (let i = -config.numColors; i < numStripes; i++) {
+                    const colorIndex = (i % config.numColors + config.numColors) % config.numColors;
+                    ctx.fillStyle = activeColors[colorIndex];
+                    
+                    let xPos;
+                    if (config.direction === 'right') {
+                        xPos = (i * config.stripeWidth) + offset - totalCycleWidth;
+                    } else {
+                        xPos = (i * config.stripeWidth) - offset;
+                    }
+                    
+                    ctx.fillRect(xPos, 0, config.stripeWidth + 1, canvas.height); // +1 防止像素縫隙
+                }
+            } else {
+                numStripes = Math.ceil(canvas.height / config.stripeWidth) + config.numColors;
+                
+                for (let i = -config.numColors; i < numStripes; i++) {
+                    const colorIndex = (i % config.numColors + config.numColors) % config.numColors;
+                    ctx.fillStyle = activeColors[colorIndex];
+                    
+                    let yPos;
+                    if (config.direction === 'down') {
+                        yPos = (i * config.stripeWidth) + offset - totalCycleWidth;
+                    } else {
+                        yPos = (i * config.stripeWidth) - offset;
+                    }
+                    
+                    ctx.fillRect(0, yPos, canvas.width, config.stripeWidth + 1);
+                }
+            }
+        }
+
+        // 遊戲循環
+        function loop() {
+            if (config.isPlaying) {
+                // 更新 offset
+                offset += config.speed;
+            }
+            draw();
+            animationId = requestAnimationFrame(loop);
+        }
+
+        // 初始化
+        updateColorPreview();
+        loop();
+
+    </script>
+</body>
+</html>
